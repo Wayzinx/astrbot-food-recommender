@@ -1,0 +1,9 @@
+{
+  "volcengine_model": "high_aes_general_v21_L",
+  "schedule_conf": "general_v20_9B_pe",
+  "region": "cn-north-1",
+  "service": "cv",
+  "doubao_access_key": "",
+  "doubao_secret_key": "",
+  "max_output_images": 1
+}
