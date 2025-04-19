@@ -22,7 +22,10 @@
 
 ```json
 "food_recommender": {
-  "default_provider": "火山",
+  "volcengine_model": "high_aes_general_v21_L",
+  "schedule_conf": "general_v20_9B_pe",
+  "region": "cn-north-1",
+  "service": "cv",
   "volcengine_ak": "您的火山引擎访问密钥",
   "volcengine_sk": "您的火山引擎密钥",
   "max_output_images": 1

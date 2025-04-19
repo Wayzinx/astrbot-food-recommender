@@ -1,23 +1,30 @@
 {
-    "default_provider": {
-        "description": "默认文生图服务提供商",
+    "volcengine_model": {
+        "description": "火山引擎文生图模型名称",
         "type": "string",
-        "hint": "请选择默认服务商：阿里、火山",
-        "default": "阿里",
+        "hint": "火山引擎文生图模型",
+        "default": "high_aes_general_v21_L",
         "obvious_hint": false
     },
-    "alibaba_api_key": {
-        "description": "阿里云通义万相API密钥",
+    "schedule_conf": {
+        "description": "火山引擎调度配置",
         "type": "string",
-        "hint": "请填写阿里云API密钥",
-        "default": "",
+        "hint": "请选择: general_v20_9B_pe(美感版)或general_v20_9B_rephraser(标准版)",
+        "default": "general_v20_9B_pe",
         "obvious_hint": false
     },
-    "alibaba_model": {
-        "description": "通义万相-文生图模型名称",
+    "region": {
+        "description": "火山引擎区域",
         "type": "string",
-        "hint": "通义万相-文生图模型",
-        "default": "wanx2.1-t2i-turbo",
+        "hint": "火山引擎区域设置",
+        "default": "cn-north-1",
+        "obvious_hint": false
+    },
+    "service": {
+        "description": "火山引擎服务名称",
+        "type": "string",
+        "hint": "火山引擎服务名称",
+        "default": "cv",
         "obvious_hint": false
     },
     "volcengine_ak": {
@@ -33,32 +40,6 @@
         "hint": "请填写火山引擎SecretKey",
         "default": "",
         "obvious_hint": false
-    },
-    "volcengine_model": {
-        "description": "火山引擎文生图模型名称",
-        "type": "string",
-        "hint": "火山引擎文生图模型",
-        "default": "high_aes_general_v21_L",
-        "obvious_hint": false
-    },
-    "fire_schedule_conf": {
-        "description": "火山引擎调度配置",
-        "type": "string",
-        "hint": "请选择: general_v20_9B_pe(美感版)或general_v20_9B_rephraser(标准版)",
-        "default": "general_v20_9B_pe",
-        "obvious_hint": false
-    },
-    "draw_keywords": {
-        "description": "触发文生图的关键词",
-        "type": "string",
-        "hint": "多个关键词用英文逗号分隔",
-        "default": "画,绘画,画个,画张,画一个,画一张,生图,画画,img,painting,draw",
-        "obvious_hint": false
-    },
-    "prompt_extend": {
-        "description": "是否开启prompt智能改写,开启后会使用大模型对输入prompt进行智能改写，仅对正向提示词有效。对于较短的输入prompt生成效果提升明显，但会增加3-4秒耗时。",
-        "type": "bool",
-        "default": false
     },
     "max_output_images": {
         "description": "最大保留图片数量",
