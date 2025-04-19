@@ -346,11 +346,11 @@ class FoodRecommenderPlugin(Star):
         yield event.chain_result([Plain(text=f"正在使用AI生成图片，请稍候...")])
 
         # 从配置中获取API密钥
-        access_key = self.config.get("doubao_access_key", "")
-        secret_key = self.config.get("doubao_secret_key", "")
+        access_key = self.config.get("volcengine_ak", "")
+        secret_key = self.config.get("volcengine_sk", "")
 
         # 记录日志
-        if "doubao_access_key" not in self.config or "doubao_secret_key" not in self.config:
+        if "volcengine_ak" not in self.config or "volcengine_sk" not in self.config:
             logger.info("使用默认API密钥生成图片")
 
         # 生成图片
@@ -375,11 +375,11 @@ class FoodRecommenderPlugin(Star):
         yield event.chain_result([Plain(text=f"正在使用AI生成\"{food_name}\"的美食图片，请稍候...")])
 
         # 从配置中获取API密钥
-        access_key = self.config.get("doubao_access_key", "")
-        secret_key = self.config.get("doubao_secret_key", "")
+        access_key = self.config.get("volcengine_ak", "")
+        secret_key = self.config.get("volcengine_sk", "")
 
         # 记录日志
-        if "doubao_access_key" not in self.config or "doubao_secret_key" not in self.config:
+        if "volcengine_ak" not in self.config or "volcengine_sk" not in self.config:
             logger.info("使用默认API密钥生成图片")
 
         # 生成图片

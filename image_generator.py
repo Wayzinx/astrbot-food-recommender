@@ -32,8 +32,8 @@ async def get_food_image(food_name, output_dir, default_img_dir=None, context=No
             if actual_context and hasattr(actual_context, 'config'):
                 try:
                     # 尝试从配置中读取API密钥
-                    config_access_key = actual_context.config.get("doubao_access_key")
-                    config_secret_key = actual_context.config.get("doubao_secret_key")
+                    config_access_key = actual_context.config.get("volcengine_ak")
+                    config_secret_key = actual_context.config.get("volcengine_sk")
 
                     # 如果配置中有密钥，使用配置中的密钥
                     if config_access_key and config_secret_key:
