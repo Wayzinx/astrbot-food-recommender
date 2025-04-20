@@ -1,19 +1,15 @@
 import json
-import sys
 from datetime import datetime, timezone
 import hashlib
 import hmac
 import requests
-import logging
 
 # 使用AstrBot的日志系统
 from astrbot.api import logger
 
 method = 'POST'
 host = 'visual.volcengineapi.com'
-region = 'cn-north-1'
 endpoint = 'https://visual.volcengineapi.com'
-service = 'cv'
 
 def sign(key, msg):
     return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
@@ -32,7 +28,7 @@ def formatQuery(parameters):
     request_parameters = request_parameters_init[:-1]
     return request_parameters
 
-def signV4Request(access_key, secret_key, service, req_query, req_body):
+def signV4Request(access_key, secret_key, service, req_query, req_body, region="cn-north-1"):
     if access_key is None or secret_key is None:
         logger.error('No access key is available.')
         return None
@@ -92,17 +88,21 @@ def signV4Request(access_key, secret_key, service, req_query, req_body):
         return r.json()
 
 
-def generate_image(access_key, secret_key, prompt, width=512, height=512):
+def generate_image(access_key, secret_key, prompt, width=1024, height=1024, model="high_aes_general_v21_L", schedule_conf="general_v20_9B_pe", region="cn-north-1", service="cv"):
     """
     生成图片的函数
-    
+
     Args:
         access_key: 火山引擎API的访问密钥
         secret_key: 火山引擎API的密钥
         prompt: 图片生成提示词
-        width: 图片宽度，默认512
-        height: 图片高度，默认512
-        
+        width: 图片宽度，默认1024
+        height: 图片高度，默认1024
+        model: 模型名称，默认为high_aes_general_v21_L
+        schedule_conf: 调度配置，默认为general_v20_9B_pe
+        region: 区域，默认为cn-north-1
+        service: 服务名称，默认为cv
+
     Returns:
         dict: API返回的JSON结果
     """
@@ -115,17 +115,18 @@ def generate_image(access_key, secret_key, prompt, width=512, height=512):
 
     # 请求Body，按照接口文档中填入即可
     body_params = {
-        "req_key": "high_aes_general_v21_L",
+        "req_key": model,
         "prompt": prompt,
         "width": width,
         "height": height,
         "use_pre_llm": True,
         "use_sr": True,
         "return_url": True,
+        "schedule_conf": schedule_conf,
         "logo_info": {
             "add_logo": False
         }
     }
     formatted_body = json.dumps(body_params)
 
-    return signV4Request(access_key, secret_key, service, formatted_query, formatted_body)
+    return signV4Request(access_key, secret_key, service, formatted_query, formatted_body, region)

@@ -43,9 +43,44 @@
     },
     "max_output_images": {
         "description": "最大保留图片数量",
-        "type": "integer",
+        "type": "int",
         "hint": "插件最多保留多少张生成的图片",
         "default": 1,
+        "obvious_hint": false
+    },
+    "food_recommendation_keywords": {
+        "description": "食物推荐触发关键词",
+        "type": "string",
+        "hint": "多个关键词用逗号分隔",
+        "default": "吃什么,吃点什么,吃啥好,吃啥,今天吃啥,eat,food,早餐吃啥,早上吃啥,中餐吃啥,午餐吃啥,晚餐吃啥,晚上吃啥,甜点推荐,想吃甜的,饿了,好饿,肚子饿",
+        "obvious_hint": false
+    },
+    "meal_time_keywords": {
+        "description": "用餐时间触发关键词",
+        "type": "string",
+        "hint": "多个关键词用逗号分隔",
+        "default": "中午,午饭,晚上,晚饭,早上,早饭,早餐",
+        "obvious_hint": false
+    },
+    "change_recommendation_keywords": {
+        "description": "换一个推荐触发关键词",
+        "type": "string",
+        "hint": "多个关键词用逗号分隔",
+        "default": "换一个,再来一个,不喜欢,其他推荐,换个推荐",
+        "obvious_hint": false
+    },
+    "food_image_keywords": {
+        "description": "美食图片生成触发关键词",
+        "type": "string",
+        "hint": "多个关键词用逗号分隔",
+        "default": "生成美食图,画美食",
+        "obvious_hint": false
+    },
+    "image_generation_keywords": {
+        "description": "通用图片生成触发关键词",
+        "type": "string",
+        "hint": "多个关键词用逗号分隔",
+        "default": "生成图片,画图,文生图",
         "obvious_hint": false
     }
 }

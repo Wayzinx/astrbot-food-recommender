@@ -1,60 +1,90 @@
 import os
-import sys
 import uuid
 import aiohttp
 from astrbot.api import logger
 
-# 修改get_food_image函数，增强图片获取的稳定性，并支持AI生成
-async def get_food_image(food_name, output_dir, default_img_dir=None, context=None):
-    """获取食物图片，使用AI生成"""
-    import os  # 确保在函数内部导入os模块
-    logger.info(f"开始获取食物图片: {food_name}")
+async def generate_food_image(food_name, prompt=None, context=None, output_dir=None, width=1024, height=1024):
+    """
+    使用AI生成食物图片
 
-    # 如果context有context属性，则使用context.context
-    actual_context = context.context if context and hasattr(context, 'context') else context
+    Args:
+        food_name: 食物名称
+        prompt: 自定义提示词，如果为None则使用默认提示词
+        context: 上下文对象，用于获取配置和记录临时图片
+        output_dir: 输出目录，如果为None则使用context中的OUTPUT_DIR
+        width: 图片宽度，默认为1024
+        height: 图片高度，默认为1024
 
-    # 尝试使用本地doubao_image模块生成图片
-    try:
-        # 尝试导入本地doubao_image模块
+    Returns:
+        str: 生成的图片路径，如果失败则返回None
+    """
+    # 确保输出目录存在
+    if output_dir is None:
+        if hasattr(context, 'OUTPUT_DIR'):
+            output_dir = context.OUTPUT_DIR
+        else:
+            # 使用当前目录下的output目录
+            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+            os.makedirs(output_dir, exist_ok=True)
+
+    # 构建默认提示词
+    if prompt is None:
+        prompt = f"高质量、写实风格的美食照片，特写镜头，\"{food_name}\"，美食摄影，精美摆盘，专业灯光，鲜艳色彩，美味可口的外观，食物特写"
+
+    logger.info(f"开始生成食物图片: {food_name}")
+
+    # 获取API密钥
+    access_key = ""
+    secret_key = ""
+
+    # 从配置中读取API密钥
+    if context and hasattr(context, 'config'):
         try:
-            # 使用相对导入从当前包导入doubao_image模块
+            access_key = context.config.get("volcengine_ak", "")
+            secret_key = context.config.get("volcengine_sk", "")
+
+            if access_key and secret_key:
+                logger.info("使用配置文件中的API密钥")
+            else:
+                logger.warning("未配置API密钥，无法生成图片")
+                return None
+        except Exception as e:
+            logger.error(f"从配置中读取API密钥失败: {e}")
+            return None
+    else:
+        logger.warning("无法获取配置，无法生成图片")
+        return None
+
+    # 生成图片
+    try:
+        # 导入doubao_image模块
+        try:
             from .doubao_image import generate_image
-            logger.info("尝试使用本地doubao_image模块生成食物图片...")
 
-            # 构建提示词
-            prompt = f"高质量、写实风格的美食照片，特写镜头，\"{food_name}\"，美食摄影，精美摆盘，专业灯光，鲜艳色彩，美味可口的外观，食物特写"
+            # 获取模型和配置
+            model = context.config.get("volcengine_model", "high_aes_general_v21_L") if context and hasattr(context, 'config') else "high_aes_general_v21_L"
+            schedule_conf = context.config.get("schedule_conf", "general_v20_9B_pe") if context and hasattr(context, 'config') else "general_v20_9B_pe"
+            region = context.config.get("region", "cn-north-1") if context and hasattr(context, 'config') else "cn-north-1"
+            service = context.config.get("service", "cv") if context and hasattr(context, 'config') else "cv"
 
-            # 默认API密钥
-            access_key = ""
-            secret_key = ""
-
-            # 如果上下文对象存在且有配置，尝试从配置中读取
-            if actual_context and hasattr(actual_context, 'config'):
-                try:
-                    # 尝试从配置中读取API密钥
-                    config_access_key = actual_context.config.get("volcengine_ak")
-                    config_secret_key = actual_context.config.get("volcengine_sk")
-
-                    # 如果配置中有密钥，使用配置中的密钥
-                    if config_access_key and config_secret_key:
-                        access_key = config_access_key
-                        secret_key = config_secret_key
-                        logger.info("使用配置文件中的API密钥")
-                    else:
-                        logger.info("使用默认API密钥")
-                except Exception as e:
-                    logger.warning(f"从配置中读取API密钥失败: {e}")
-
-            logger.info(f"API密钥长度: {len(access_key)}, {len(secret_key)}")
-
-            # 生成图片
-            result = generate_image(access_key, secret_key, prompt)
+            # 调用API生成图片
+            result = generate_image(
+                access_key,
+                secret_key,
+                prompt,
+                width=width,
+                height=height,
+                model=model,
+                schedule_conf=schedule_conf,
+                region=region,
+                service=service
+            )
 
             # 检查结果
             if result.get("code") == 10000:
                 # 成功生成图片
                 image_url = result["data"]["image_urls"][0]
-                logger.info(f"成功使用本地doubao_image模块生成食物图片URL: {image_url}")
+                logger.info(f"成功生成图片URL: {image_url}")
 
                 # 下载图片
                 try:
@@ -63,35 +93,47 @@ async def get_food_image(food_name, output_dir, default_img_dir=None, context=No
                             if response.status == 200:
                                 img_data = await response.read()
                                 local_path = os.path.join(output_dir, f"{food_name}_{uuid.uuid4().hex[:8]}.jpg")
+
                                 with open(local_path, "wb") as f:
                                     f.write(img_data)
-                                # 记录这是一个临时图片
-                                if actual_context and hasattr(actual_context, 'temp_images'):
-                                    actual_context.temp_images.add(local_path)
+
+                                # 记录临时图片
+                                if context and hasattr(context, 'temp_images'):
+                                    context.temp_images.add(local_path)
                                     # 清理旧图片
-                                    if hasattr(actual_context, '_cleanup_old_images'):
-                                        actual_context._cleanup_old_images()
+                                    if hasattr(context, '_cleanup_old_images'):
+                                        context._cleanup_old_images()
+
                                 logger.info(f"已下载生成的图片到: {local_path}")
                                 return local_path
                 except Exception as e:
                     logger.error(f"下载生成的图片失败: {e}")
             else:
                 logger.error(f"生成图片失败，错误码: {result.get('code')}, 消息: {result.get('message')}")
-        except ImportError as ie:
-            logger.info(f"未找到本地doubao_image模块，将使用其他方法获取图片: {ie}")
+        except ImportError:
+            logger.error("未找到doubao_image模块，无法生成图片")
         except Exception as e:
-            logger.error(f"使用本地doubao_image模块生成图片失败: {e}")
+            logger.error(f"生成图片失败: {e}")
     except Exception as e:
         logger.error(f"生成图片过程中出错: {e}")
 
-    # 已删除共享API生成图片的代码
-
-    # 跳过在线API获取图片，直接使用AI生成
-    logger.info("跳过在线API获取图片，使用AI生成或默认图片")
-
-    # 如果所有生成方法都失败，不返回图片
-    logger.info("所有图片生成方法都失败，不返回图片")
-
-    # 如果所有方法都失败，返回None
-    logger.warning(f"所有图片获取方法都失败，返回None")
     return None
+
+# 为了向后兼容，保留原来的函数名
+async def get_food_image(food_name, output_dir, default_img_dir=None, context=None, width=1024, height=1024):
+    """
+    获取食物图片（向后兼容的函数）
+
+    Args:
+        food_name: 食物名称
+        output_dir: 输出目录
+        default_img_dir: 默认图片目录（不再使用）
+        context: 上下文对象
+        width: 图片宽度，默认为1024
+        height: 图片高度，默认为1024
+
+    Returns:
+        str: 生成的图片路径，如果失败则返回None
+    """
+    # default_img_dir 参数不再使用，仅为了兼容旧版本的调用
+    return await generate_food_image(food_name, context=context, output_dir=output_dir, width=width, height=height)
