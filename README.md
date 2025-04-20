@@ -30,6 +30,18 @@
   "max_output_images": 1
 }
 ```
+### 密钥获取办法
+
+1.点击链接：https://www.volcengine.com/docs/6791/116929 获取密钥AK和SK，然后根据教程将文生图功能解锁
+![火山官网密钥获取](doubao_image/volcengine.png)
+
+2.开启文生图服务
+![开启文生图服务](doubao_image/serverregist.png)
+
+3.在控制台填入密钥，等待插件重启即可
+![控制台填入密钥](doubao_image/edit.jpg)
+
+
 
 > **注意**：如果不配置 API 密钥，插件将无法生成图片。您需要在[火山引擎](https://www.volcengine.com/)申请 API 密钥。
 
