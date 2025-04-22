@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 import hashlib
 import hmac
-import requests
+import aiohttp
 
 # 使用AstrBot的日志系统
 from astrbot.api import logger
@@ -28,7 +28,7 @@ def formatQuery(parameters):
     request_parameters = request_parameters_init[:-1]
     return request_parameters
 
-def signV4Request(access_key, secret_key, service, req_query, req_body, region="cn-north-1"):
+async def signV4Request(access_key, secret_key, service, req_query, req_body, region="cn-north-1"):
     if access_key is None or secret_key is None:
         logger.error('No access key is available.')
         return None
@@ -75,20 +75,22 @@ def signV4Request(access_key, secret_key, service, req_query, req_body, region="
     logger.info('\nBEGIN REQUEST++++++++++++++++++++++++++++++++++++')
     logger.info('Request URL = ' + request_url)
     try:
-        r = requests.post(request_url, headers=headers, data=req_body)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(request_url, headers=headers, data=req_body) as response:
+                logger.info('\nRESPONSE++++++++++++++++++++++++++++++++++++')
+                logger.info(f'Response code: {response.status}\n')
+                # 读取响应内容
+                response_text = await response.text()
+                # 使用 replace 方法将 \u0026 替换为 &
+                resp_str = response_text.replace("\\u0026", "&")
+                logger.info(f'Response body: {resp_str}\n')
+                return await response.json()
     except Exception as err:
         logger.error(f'error occurred: {err}')
         raise
-    else:
-        logger.info('\nRESPONSE++++++++++++++++++++++++++++++++++++')
-        logger.info(f'Response code: {r.status_code}\n')
-        # 使用 replace 方法将 \u0026 替换为 &
-        resp_str = r.text.replace("\\u0026", "&")
-        logger.info(f'Response body: {resp_str}\n')
-        return r.json()
 
 
-def generate_image(access_key, secret_key, prompt, width=1024, height=1024, model="high_aes_general_v21_L", schedule_conf="general_v20_9B_pe", region="cn-north-1", service="cv"):
+async def generate_image(access_key, secret_key, prompt, width=1024, height=1024, model="high_aes_general_v21_L", schedule_conf="general_v20_9B_pe", region="cn-north-1", service="cv"):
     """
     生成图片的函数
 
@@ -129,4 +131,4 @@ def generate_image(access_key, secret_key, prompt, width=1024, height=1024, mode
     }
     formatted_body = json.dumps(body_params)
 
-    return signV4Request(access_key, secret_key, service, formatted_query, formatted_body, region)
+    return await signV4Request(access_key, secret_key, service, formatted_query, formatted_body, region)

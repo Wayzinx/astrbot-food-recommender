@@ -68,7 +68,7 @@ async def generate_food_image(food_name, prompt=None, context=None, output_dir=N
             service = context.config.get("service", "cv") if context and hasattr(context, 'config') else "cv"
 
             # 调用API生成图片
-            result = generate_image(
+            result = await generate_image(
                 access_key,
                 secret_key,
                 prompt,
