@@ -165,9 +165,6 @@ class FoodRecommenderPlugin(Star):
             meal_type(string): 用餐类型，可选值：早餐、中餐、晚餐，不提供则根据当前时间推荐
             city(string): 城市名称，用于获取当地天气信息，可选参数
         '''
-        # 发送等待消息
-        yield event.chain_result([Plain(text=f"正在为你推荐{meal_type or '美食'}，请稍候...")])
-
         # 保存城市信息到context中，供generate_food_recommendation使用
         if city:
             self.user_specified_city = city
@@ -183,18 +180,8 @@ class FoodRecommenderPlugin(Star):
             'timestamp': datetime.datetime.now()
         }
 
-        # 构建消息链
-        message_chain = [
-            Plain(text=f"我为你推荐：{recommendation['food']}\n\n"),
-            Plain(text=f"{recommendation['reason']}\n\n"),
-            Plain(text=f"{recommendation['description']}")
-        ]
-
-        # 如果有图片，添加图片
+        # 清理旧图片，只保留最新的几张
         if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-            message_chain.append(Image(file=recommendation['image_path']))
-
-            # 清理旧图片，只保留最新的几张
             self._cleanup_old_images()
 
             # 如果是临时图片，延迟删除
@@ -211,8 +198,9 @@ class FoodRecommenderPlugin(Star):
 
                 asyncio.create_task(delayed_delete(recommendation['image_path']))
 
-        # 返回推荐
-        yield event.chain_result(message_chain)
+        # 返回文本结果
+        result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
+        return result_text
 
     # 食物类型关键词映射
     MEAL_TYPE_KEYWORDS = {
@@ -286,8 +274,7 @@ class FoodRecommenderPlugin(Star):
                 text = event.message_str
             else:
                 # 如果无法获取消息，返回错误提示
-                yield event.chain_result([Plain(text="无法获取消息文本，请提供文本参数")])
-                return
+                return "无法获取消息文本，请提供文本参数"
 
         # 转换为小写
         text = text.lower()
@@ -296,8 +283,8 @@ class FoodRecommenderPlugin(Star):
         if command_type is None:
             command_type = self._get_command_type(text)
 
-        # 定义chain_result方法
-        event.chain_result = lambda components: components
+        # LLM工具函数应该返回字符串，而不是消息组件
+        # 我们需要修改返回方式
 
         # 处理不同类型的命令
         if command_type == "food_recommendation":
@@ -307,9 +294,20 @@ class FoodRecommenderPlugin(Star):
             # 使用辅助方法检测餐点类型
             meal_type = self._detect_meal_type(text)
 
-            # 使用recommend_food方法生成推荐
-            async for result in self.recommend_food(event, meal_type):
-                yield result
+            # 生成推荐
+            recommendation = await generate_food_recommendation(meal_type, self)
+
+            # 记录本次推荐，用于"换一个"功能
+            user_id = self._get_user_id(event)
+            self.last_recommendations[user_id] = {
+                'meal_type': meal_type,
+                'food': recommendation['food'],
+                'timestamp': datetime.datetime.now()
+            }
+
+            # 返回文本结果
+            result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
+            return result_text
 
         elif command_type == "change_recommendation":
             # 处理换一个推荐命令
@@ -339,64 +337,69 @@ class FoodRecommenderPlugin(Star):
                     }
 
                     # 构建回复文本
-                    response_text = f"\u6362\u4e00\u4e2a\u63a8\u8350\uff1a{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
+                    response_text = f"换一个推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
 
-                    # 如果有图片，添加图片
+                    # 清理旧图片，只保留最新的几张
                     if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-                        # 清理旧图片，只保留最新的几张
                         self._cleanup_old_images()
 
-                        # 构建消息链
-                        message_chain = [
-                            Plain(text=response_text)
-                        ]
-
-                        # 添加图片
-                        message_chain.append(Image(file=recommendation['image_path']))
-
-                        # 返回推荐
-                        yield event.chain_result(message_chain)
-                        return
-                    else:
-                        # 如果没有图片，只返回文本
-                        yield event.chain_result([Plain(text=response_text)])
-                        return
+                    return response_text
 
             # 如果没有之前的推荐记录或已过期，提示用户
-            yield event.chain_result([Plain(text="抱歉，我不记得之前给你推荐了什么。请先告诉我你想吃什么类型的食物？")])
-            return
+            return "抱歉，我不记得之前给你推荐了什么。请先告诉我你想吃什么类型的食物？"
 
         elif command_type == "food_image":
             # 处理美食图片生成命令
             # 提取食物名称
             food_name = self._extract_food_name(text)
             if not food_name:
-                yield event.chain_result([Plain(text="请指定要生成图片的食物名称，例如：生成美食图 红烧肉")])
-                return
+                return "请指定要生成图片的食物名称，例如：生成美食图 红烧肉"
 
             # 构建美食提示词
             prompt = f"高质量、写实风格的美食照片，特写镜头，\"{food_name}\"，美食摄影，精美摆盘，专业灯光，鲜艳色彩，美味可口的外观，食物特写"
 
-            # 使用generate_image方法生成图片
-            async for result in self.generate_image(event, prompt):
-                yield result
+            # 生成图片
+            from .image_generator import generate_food_image
+            image_path = await generate_food_image(
+                food_name=None,
+                prompt=prompt,
+                context=self,
+                output_dir=self.OUTPUT_DIR,
+                width=1024,
+                height=1024
+            )
+
+            if image_path:
+                return f"已为您生成{food_name}的美食图片"
+            else:
+                return "AI生成图片失败，请稍后再试。"
 
         elif command_type == "image_generation":
             # 处理通用图片生成命令
             # 提取提示词
             prompt = self._extract_prompt(text)
             if not prompt:
-                yield event.chain_result([Plain(text="请指定要生成图片的提示词，例如：生成图片 小猫在沙发上睡觉")])
-                return
+                return "请指定要生成图片的提示词，例如：生成图片 小猫在沙发上睡觉"
 
-            # 使用generate_image方法生成图片
-            async for result in self.generate_image(event, prompt):
-                yield result
+            # 生成图片
+            from .image_generator import generate_food_image
+            image_path = await generate_food_image(
+                food_name=None,
+                prompt=prompt,
+                context=self,
+                output_dir=self.OUTPUT_DIR,
+                width=1024,
+                height=1024
+            )
+
+            if image_path:
+                return f"已根据您的提示词生成图片"
+            else:
+                return "AI生成图片失败，请稍后再试。"
 
         else:
             # 如果无法识别命令类型，返回提示
-            yield event.chain_result([Plain(text="抱歉，我无法理解您的命令。请尝试使用“吃什么”、“生成美食图”等命令。")])
-            return
+            return "抱歉，我无法理解您的命令。请尝试使用“吃什么”、“生成美食图”等命令。"
 
     # 已在food_command_handler中实现换一个推荐的功能，此方法不再使用
 
@@ -420,11 +423,7 @@ class FoodRecommenderPlugin(Star):
         # 检查API密钥
         if not access_key or not secret_key:
             logger.warning("缺少API密钥配置，请在_conf_schema.json中添加volcengine_ak和volcengine_sk")
-            yield event.chain_result([Plain(text=f"API密钥配置缺失，无法生成图片。")])
-            return
-
-        # 发送等待消息
-        yield event.chain_result([Plain(text=f"正在生成图片，请稍候...")])
+            return "API密钥配置缺失，无法生成图片。"
 
         # 使用image_generator模块生成图片
         from .image_generator import generate_food_image
@@ -438,12 +437,9 @@ class FoodRecommenderPlugin(Star):
         )
 
         if image_path:
-            yield event.chain_result([
-                Plain(text=f"已生成图片：\n"),
-                Image(file=image_path)
-            ])
+            return f"已生成图片：{prompt}"
         else:
-            yield event.chain_result([Plain(text=f"AI生成图片失败，请稍后再试。")])
+            return "AI生成图片失败，请稍后再试。"
 
     # 消息处理器不再需要，因为我们使用LLM工具来处理命令
 
