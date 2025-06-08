@@ -108,10 +108,23 @@ async def generate_food_recommendation(meal_type=None, context=None):
     if hasattr(context, 'last_user_text'):
         user_text = context.last_user_text
 
-    weather_info = await get_weather(user_text)
+    # 检查是否有用户指定的城市
+    if hasattr(context, 'user_specified_city') and context.user_specified_city:
+        specified_city = context.user_specified_city
+        logger.info(f"用户指定了城市: {specified_city}")
+        # 如果用户指定了城市，使用指定的城市获取天气
+        weather_info = await get_weather(specified_city)
+        # 清除临时存储的城市信息
+        context.user_specified_city = None
+    else:
+        # 否则使用用户文本识别城市
+        weather_info = await get_weather(user_text)
+
     temperature = weather_info["temperature"]
     weather = weather_info["weather"]
     city = weather_info.get("city", "上海")
+
+    logger.info(f"最终使用的城市: {city}, 温度: {temperature}, 天气: {weather}")
 
     # 获取当前季节
     season = get_season()

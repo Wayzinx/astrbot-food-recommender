@@ -158,14 +158,19 @@ class FoodRecommenderPlugin(Star):
             logger.error(f"清理旧图片时出错: {e}")
 
     @llm_tool(name="recommend_food")
-    async def recommend_food(self, event, meal_type: str = None):
+    async def recommend_food(self, event, meal_type: str = None, city: str = None):
         '''根据当前时间、天气等因素推荐美食
 
         Args:
             meal_type(string): 用餐类型，可选值：早餐、中餐、晚餐，不提供则根据当前时间推荐
+            city(string): 城市名称，用于获取当地天气信息，可选参数
         '''
         # 发送等待消息
         yield event.chain_result([Plain(text=f"正在为你推荐{meal_type or '美食'}，请稍候...")])
+
+        # 保存城市信息到context中，供generate_food_recommendation使用
+        if city:
+            self.user_specified_city = city
 
         # 生成推荐
         recommendation = await generate_food_recommendation(meal_type, self)

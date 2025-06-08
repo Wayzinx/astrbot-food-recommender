@@ -68,11 +68,17 @@ async def get_weather(user_text=None):
 
         # 如果提供了用户文本，尝试从中识别城市
         if user_text:
-            for c in CHINA_CITIES:
-                if c in user_text:
-                    city = c
-                    logger.info(f"从用户文本中识别到城市: {city}")
-                    break
+            # 首先检查user_text是否直接是一个城市名
+            if user_text in CHINA_CITIES:
+                city = user_text
+                logger.info(f"直接使用指定的城市: {city}")
+            else:
+                # 否则尝试从文本中识别城市
+                for c in CHINA_CITIES:
+                    if c in user_text:
+                        city = c
+                        logger.info(f"从用户文本中识别到城市: {city}")
+                        break
 
         # 使用wttr.in API获取指定城市的天气
         url = f"https://wttr.in/{city}?format=j1"
