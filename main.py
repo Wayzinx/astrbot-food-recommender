@@ -32,6 +32,8 @@ class FoodRecommenderPlugin(Star):
         self.temp_images = set()
         # 记录上一次的推荐信息，用于"换一个"功能
         self.last_recommendations = {}
+        # 记录最近的推荐历史，用于去重
+        self.recent_foods = {}
         # 添加OUTPUT_DIR到context，以便其他模块使用
         self.OUTPUT_DIR = OUTPUT_DIR
 
@@ -258,7 +260,7 @@ class FoodRecommenderPlugin(Star):
 
     # 统一的命令处理函数
     @llm_tool(name="food_command_handler")
-    async def food_command_handler(self, event, text: str = None, command_type: str = None):
+    async def food_command_handler(self, event, text: str = None, command_type: str = None, city: str = None):
         '''食物推荐插件的统一命令处理函数
 
         处理各种食物相关的命令，包括食物推荐、换一个推荐、图片生成等。
@@ -266,6 +268,7 @@ class FoodRecommenderPlugin(Star):
         Args:
             text(string): 用户输入的文本，如果为None则使用事件中的消息
             command_type(string): 命令类型，如果为None则自动检测
+            city(string): 城市名称，用于获取当地天气信息，可选参数
         '''
         # 获取消息文本
         if text is None:
@@ -291,6 +294,10 @@ class FoodRecommenderPlugin(Star):
             # 保存用户文本，供后续处理使用
             self.last_user_text = text
 
+            # 保存城市信息到context中，供generate_food_recommendation使用
+            if city:
+                self.user_specified_city = city
+
             # 使用辅助方法检测餐点类型
             meal_type = self._detect_meal_type(text)
 
@@ -302,7 +309,8 @@ class FoodRecommenderPlugin(Star):
             self.last_recommendations[user_id] = {
                 'meal_type': meal_type,
                 'food': recommendation['food'],
-                'timestamp': datetime.datetime.now()
+                'timestamp': datetime.datetime.now(),
+                'city': city  # 记录城市信息
             }
 
             # 返回文本结果
@@ -322,22 +330,53 @@ class FoodRecommenderPlugin(Star):
                     meal_type = last_rec['meal_type']
                     last_food = last_rec['food']
 
-                    # 生成新的推荐，避免与上次相同
+                    # 如果指定了新城市，使用新城市；否则使用上次的城市
+                    if city:
+                        self.user_specified_city = city
+                        current_city = city
+                    else:
+                        current_city = last_rec.get('city', None)
+                        if current_city:
+                            self.user_specified_city = current_city
+
+                    # 初始化历史推荐列表（用于更好的去重）
+                    if not hasattr(self, 'recent_foods'):
+                        self.recent_foods = {}
+                    if user_id not in self.recent_foods:
+                        self.recent_foods[user_id] = []
+
+                    # 添加当前食物到历史列表
+                    if last_food not in self.recent_foods[user_id]:
+                        self.recent_foods[user_id].append(last_food)
+
+                    # 只保留最近5个推荐用于去重
+                    if len(self.recent_foods[user_id]) > 5:
+                        self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
+
+                    # 生成新的推荐，避免与最近推荐的相同
                     from .recommendation import generate_food_recommendation
-                    for _ in range(5):  # 尝试最多5次以获取不同的推荐
+                    for attempt in range(10):  # 尝试最多10次以获取不同的推荐
                         recommendation = await generate_food_recommendation(meal_type, self)
-                        if recommendation['food'] != last_food:
+                        if recommendation['food'] not in self.recent_foods[user_id]:
                             break
+                        logger.info(f"第{attempt+1}次尝试，推荐的{recommendation['food']}与历史重复，重新生成")
 
                     # 更新最后推荐记录
                     self.last_recommendations[user_id] = {
                         'meal_type': meal_type,
                         'food': recommendation['food'],
-                        'timestamp': datetime.datetime.now()
+                        'timestamp': datetime.datetime.now(),
+                        'city': current_city
                     }
 
+                    # 添加新推荐到历史列表
+                    self.recent_foods[user_id].append(recommendation['food'])
+                    if len(self.recent_foods[user_id]) > 5:
+                        self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
+
                     # 构建回复文本
-                    response_text = f"换一个推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
+                    city_text = f"（{current_city}）" if current_city else ""
+                    response_text = f"换一个推荐{city_text}：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
 
                     # 清理旧图片，只保留最新的几张
                     if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
