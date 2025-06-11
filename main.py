@@ -105,6 +105,7 @@ class FoodRecommenderPlugin(Star):
         # 激活LLM工具
         self.context.activate_llm_tool("recommend_food")
         self.context.activate_llm_tool("food_command_handler")
+        self.context.activate_llm_tool("change_food_recommendation")
         self.context.activate_llm_tool("generate_image")
 
     def _cleanup_old_images(self):
@@ -174,11 +175,23 @@ class FoodRecommenderPlugin(Star):
         if city:
             self.user_specified_city = city
 
-        # 生成推荐
-        recommendation = await generate_food_recommendation(meal_type, self)
+        # 获取用户ID用于去重
+        user_id = self._get_user_id(event)
+
+        # 初始化历史推荐列表（用于去重）
+        if not hasattr(self, 'recent_foods'):
+            self.recent_foods = {}
+        if user_id not in self.recent_foods:
+            self.recent_foods[user_id] = []
+
+        # 生成推荐，避免与最近推荐的相同
+        for attempt in range(10):  # 尝试最多10次以获取不同的推荐
+            recommendation = await generate_food_recommendation(meal_type, self)
+            if recommendation['food'] not in self.recent_foods[user_id]:
+                break
+            logger.info(f"第{attempt+1}次尝试，推荐的{recommendation['food']}与历史重复，重新生成")
 
         # 记录本次推荐，用于"换一个"功能
-        user_id = self._get_user_id(event)
         self.last_recommendations[user_id] = {
             'meal_type': meal_type,
             'food': recommendation['food'],
@@ -186,11 +199,7 @@ class FoodRecommenderPlugin(Star):
             'city': city  # 记录城市信息
         }
 
-        # 初始化并更新历史推荐列表
-        if not hasattr(self, 'recent_foods'):
-            self.recent_foods = {}
-        if user_id not in self.recent_foods:
-            self.recent_foods[user_id] = []
+        # 更新历史推荐列表
         self.recent_foods[user_id].append(recommendation['food'])
         if len(self.recent_foods[user_id]) > 5:
             self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
@@ -329,7 +338,7 @@ class FoodRecommenderPlugin(Star):
                 yield result
 
         elif command_type == "change_recommendation":
-            # 处理换一个推荐命令
+            # 处理换一个推荐命令 - 直接调用recommend_food方法
             user_id = self._get_user_id(event)
 
             if user_id in self.last_recommendations:
@@ -339,7 +348,6 @@ class FoodRecommenderPlugin(Star):
                 if time_diff.total_seconds() < 86400:  # 24小时 = 86400秒
                     # 获取上次推荐的餐点类型
                     meal_type = last_rec['meal_type']
-                    last_food = last_rec['food']
 
                     # 如果指定了新城市，使用新城市；否则尝试从文本检测或使用上次的城市
                     if city:
@@ -347,67 +355,10 @@ class FoodRecommenderPlugin(Star):
                     else:
                         current_city = self._detect_city(text) or last_rec.get('city', None)
 
-                    # 初始化历史推荐列表（用于更好的去重）
-                    if not hasattr(self, 'recent_foods'):
-                        self.recent_foods = {}
-                    if user_id not in self.recent_foods:
-                        self.recent_foods[user_id] = []
-
-                    # 添加当前食物到历史列表
-                    if last_food not in self.recent_foods[user_id]:
-                        self.recent_foods[user_id].append(last_food)
-
-                    # 只保留最近5个推荐用于去重
-                    if len(self.recent_foods[user_id]) > 5:
-                        self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
-
-                    # 生成新的推荐，避免与最近推荐的相同
-                    from .recommendation import generate_food_recommendation
-                    for attempt in range(10):  # 尝试最多10次以获取不同的推荐
-                        # 设置城市信息
-                        if current_city:
-                            self.user_specified_city = current_city
-                        recommendation = await generate_food_recommendation(meal_type, self)
-                        if recommendation['food'] not in self.recent_foods[user_id]:
-                            break
-
-                    # 更新最后推荐记录
-                    self.last_recommendations[user_id] = {
-                        'meal_type': meal_type,
-                        'food': recommendation['food'],
-                        'timestamp': datetime.datetime.now(),
-                        'city': current_city
-                    }
-
-                    # 添加新推荐到历史列表
-                    self.recent_foods[user_id].append(recommendation['food'])
-                    if len(self.recent_foods[user_id]) > 5:
-                        self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
-
-                    # 构建回复文本
-                    city_text = f"（{current_city}）" if current_city else ""
-                    response_text = f"换一个推荐{city_text}：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
-
-                    # 如果有图片，添加图片
-                    if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-                        # 清理旧图片，只保留最新的几张
-                        self._cleanup_old_images()
-
-                        # 构建消息链
-                        message_chain = [
-                            Plain(text=response_text)
-                        ]
-
-                        # 添加图片
-                        message_chain.append(Image(file=recommendation['image_path']))
-
-                        # 返回推荐
-                        yield event.chain_result(message_chain)
-                        return
-                    else:
-                        # 如果没有图片，只返回文本
-                        yield event.chain_result([Plain(text=response_text)])
-                        return
+                    # 直接调用recommend_food方法，它会处理去重逻辑
+                    async for result in self.recommend_food(event, meal_type, current_city):
+                        yield result
+                    return
 
             # 如果没有之前的推荐记录或已过期，提示用户
             yield event.chain_result([Plain(text="抱歉，我不记得之前给你推荐了什么。请先告诉我你想吃什么类型的食物？")])
@@ -445,7 +396,42 @@ class FoodRecommenderPlugin(Star):
             yield event.chain_result([Plain(text="抱歉，我无法理解您的命令。请尝试使用“吃什么”、“生成美食图”等命令。")])
             return
 
-    # 已在food_command_handler中实现换一个推荐的功能，此方法不再使用
+    @llm_tool(name="change_food_recommendation")
+    async def change_food_recommendation(self, event, city: str = None):
+        '''换一个美食推荐
+
+        Args:
+            city(string): 城市名称，用于获取当地天气信息，可选参数
+        '''
+        user_id = self._get_user_id(event)
+
+        if user_id in self.last_recommendations:
+            last_rec = self.last_recommendations[user_id]
+            # 检查最后推荐是否在24小时内
+            time_diff = datetime.datetime.now() - last_rec['timestamp']
+            if time_diff.total_seconds() < 86400:  # 24小时 = 86400秒
+                # 获取上次推荐的餐点类型
+                meal_type = last_rec['meal_type']
+
+                # 如果指定了新城市，使用新城市；否则使用上次的城市
+                if city:
+                    current_city = city
+                else:
+                    current_city = last_rec.get('city', None)
+
+                # 发送等待消息
+                city_text = f"（{current_city}）" if current_city else ""
+                yield event.chain_result([Plain(text=f"正在为你换一个推荐{city_text}，请稍候...")])
+
+                # 直接调用recommend_food方法，它会处理去重逻辑
+                async for result in self.recommend_food(event, meal_type, current_city):
+                    # 跳过等待消息，只返回推荐结果
+                    if not (len(result) == 1 and "正在为你推荐" in str(result[0])):
+                        yield result
+                return
+
+        # 如果没有之前的推荐记录或已过期，提示用户
+        yield event.chain_result([Plain(text="抱歉，我不记得之前给你推荐了什么。请先告诉我你想吃什么类型的食物？")])
 
     @llm_tool(name="generate_image")
     async def generate_image(self, event, prompt: str, img_width: int = None, img_height: int = None):
