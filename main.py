@@ -34,8 +34,6 @@ class FoodRecommenderPlugin(Star):
         self.last_recommendations = {}
         # 记录最近的推荐历史，用于去重
         self.recent_foods = {}
-        # 待显示的图片信息
-        self.pending_images = {}
         # 添加OUTPUT_DIR到context，以便其他模块使用
         self.OUTPUT_DIR = OUTPUT_DIR
 
@@ -169,6 +167,9 @@ class FoodRecommenderPlugin(Star):
             meal_type(string): 用餐类型，可选值：早餐、中餐、晚餐，不提供则根据当前时间推荐
             city(string): 城市名称，用于获取当地天气信息，可选参数
         '''
+        # 发送等待消息
+        yield event.chain_result([Plain(text=f"正在为你推荐{meal_type or '美食'}，请稍候...")])
+
         # 保存城市信息到context中，供generate_food_recommendation使用
         if city:
             self.user_specified_city = city
@@ -186,26 +187,44 @@ class FoodRecommenderPlugin(Star):
         }
 
         # 初始化并更新历史推荐列表
+        if not hasattr(self, 'recent_foods'):
+            self.recent_foods = {}
         if user_id not in self.recent_foods:
             self.recent_foods[user_id] = []
         self.recent_foods[user_id].append(recommendation['food'])
         if len(self.recent_foods[user_id]) > 5:
             self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
 
-        # 准备图片信息（如果有的话）
+        # 构建消息链
+        message_chain = [
+            Plain(text=f"我为你推荐：{recommendation['food']}\n\n"),
+            Plain(text=f"{recommendation['reason']}\n\n"),
+            Plain(text=f"{recommendation['description']}")
+        ]
+
+        # 如果有图片，添加图片
         if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-            # 将图片信息存储到待显示列表中
-            result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
-            self.pending_images[user_id] = {
-                'text': result_text,
-                'image_path': recommendation['image_path']
-            }
-            # 返回带图片提示的文本
-            return f"{result_text}\n\n[图片已生成，正在显示...]"
-        else:
-            # 没有图片，直接返回文本
-            result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
-            return result_text
+            message_chain.append(Image(file=recommendation['image_path']))
+
+            # 清理旧图片，只保留最新的几张
+            self._cleanup_old_images()
+
+            # 如果是临时图片，延迟删除
+            if recommendation['image_path'] in self.temp_images:
+                async def delayed_delete(path, delay=10):
+                    await asyncio.sleep(delay)
+                    try:
+                        if os.path.exists(path):
+                            os.unlink(path)
+                            logger.info(f"已删除临时图片: {path}")
+                            self.temp_images.discard(path)
+                    except Exception as e:
+                        logger.error(f"删除临时图片失败 {path}: {e}")
+
+                asyncio.create_task(delayed_delete(recommendation['image_path']))
+
+        # 返回推荐
+        yield event.chain_result(message_chain)
 
     # 食物类型关键词映射
     MEAL_TYPE_KEYWORDS = {
@@ -273,11 +292,6 @@ class FoodRecommenderPlugin(Star):
             command_type(string): 命令类型，如果为None则自动检测
             city(string): 城市名称，用于获取当地天气信息，可选参数
         '''
-        # 导入必要的模块
-        from .recommendation import generate_food_recommendation
-        # 添加调试日志
-        logger.info(f"food_command_handler 被调用，参数: text={text}, command_type={command_type}, city={city}")
-
         # 获取消息文本
         if text is None:
             # 尝试从事件中获取消息
@@ -285,87 +299,57 @@ class FoodRecommenderPlugin(Star):
                 text = event.message_str
             else:
                 # 如果无法获取消息，返回错误提示
-                logger.warning("无法获取消息文本")
-                return "无法获取消息文本，请提供文本参数"
+                yield event.chain_result([Plain(text="无法获取消息文本，请提供文本参数")])
+                return
 
         # 转换为小写
         text = text.lower()
-        logger.info(f"处理的文本: {text}")
 
         # 如果没有指定命令类型，自动检测
         if command_type is None:
             command_type = self._get_command_type(text)
-            logger.info(f"自动检测的命令类型: {command_type}")
-        else:
-            logger.info(f"指定的命令类型: {command_type}")
 
-        # 标准化命令类型
-        if command_type in ["推荐", "recommend"]:
-            command_type = "food_recommendation"
-        elif command_type in ["换一个推荐", "change_recommendation"]:
-            command_type = "change_recommendation"
-
-        logger.info(f"最终使用的命令类型: {command_type}")
+        # 定义chain_result方法
+        event.chain_result = lambda components: components
 
         # 处理不同类型的命令
         if command_type == "food_recommendation":
             # 保存用户文本，供后续处理使用
             self.last_user_text = text
 
-            # 保存城市信息到context中，供generate_food_recommendation使用
-            if city:
-                self.user_specified_city = city
-
             # 使用辅助方法检测餐点类型
             meal_type = self._detect_meal_type(text)
 
-            # 生成推荐
-            recommendation = await generate_food_recommendation(meal_type, self)
-            logger.info(f"生成推荐成功: {recommendation['food']}")
+            # 如果没有传入城市参数，尝试从文本中检测
+            if not city:
+                city = self._detect_city(text)
 
-            # 记录本次推荐，用于"换一个"功能
-            user_id = self._get_user_id(event)
-            self.last_recommendations[user_id] = {
-                'meal_type': meal_type,
-                'food': recommendation['food'],
-                'timestamp': datetime.datetime.now(),
-                'city': city  # 记录城市信息
-            }
-
-            # 返回文本结果
-            result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
-            return result_text
+            # 使用recommend_food方法生成推荐
+            async for result in self.recommend_food(event, meal_type, city):
+                yield result
 
         elif command_type == "change_recommendation":
             # 处理换一个推荐命令
-            logger.info("处理换一个推荐命令")
             user_id = self._get_user_id(event)
-            logger.info(f"用户ID: {user_id}")
 
             if user_id in self.last_recommendations:
                 last_rec = self.last_recommendations[user_id]
-                logger.info(f"找到上次推荐记录: {last_rec}")
-
                 # 检查最后推荐是否在24小时内
                 time_diff = datetime.datetime.now() - last_rec['timestamp']
                 if time_diff.total_seconds() < 86400:  # 24小时 = 86400秒
                     # 获取上次推荐的餐点类型
                     meal_type = last_rec['meal_type']
                     last_food = last_rec['food']
-                    logger.info(f"上次推荐: {last_food}, 餐点类型: {meal_type}")
 
-                    # 如果指定了新城市，使用新城市；否则使用上次的城市
+                    # 如果指定了新城市，使用新城市；否则尝试从文本检测或使用上次的城市
                     if city:
-                        self.user_specified_city = city
                         current_city = city
-                        logger.info(f"使用新指定的城市: {city}")
                     else:
-                        current_city = last_rec.get('city', None)
-                        if current_city:
-                            self.user_specified_city = current_city
-                            logger.info(f"使用上次的城市: {current_city}")
+                        current_city = self._detect_city(text) or last_rec.get('city', None)
 
                     # 初始化历史推荐列表（用于更好的去重）
+                    if not hasattr(self, 'recent_foods'):
+                        self.recent_foods = {}
                     if user_id not in self.recent_foods:
                         self.recent_foods[user_id] = []
 
@@ -377,15 +361,15 @@ class FoodRecommenderPlugin(Star):
                     if len(self.recent_foods[user_id]) > 5:
                         self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
 
-                    logger.info(f"当前历史推荐列表: {self.recent_foods[user_id]}")
-
                     # 生成新的推荐，避免与最近推荐的相同
+                    from .recommendation import generate_food_recommendation
                     for attempt in range(10):  # 尝试最多10次以获取不同的推荐
+                        # 设置城市信息
+                        if current_city:
+                            self.user_specified_city = current_city
                         recommendation = await generate_food_recommendation(meal_type, self)
                         if recommendation['food'] not in self.recent_foods[user_id]:
-                            logger.info(f"第{attempt+1}次尝试成功，推荐: {recommendation['food']}")
                             break
-                        logger.info(f"第{attempt+1}次尝试，推荐的{recommendation['food']}与历史重复，重新生成")
 
                     # 更新最后推荐记录
                     self.last_recommendations[user_id] = {
@@ -404,26 +388,30 @@ class FoodRecommenderPlugin(Star):
                     city_text = f"（{current_city}）" if current_city else ""
                     response_text = f"换一个推荐{city_text}：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
 
-                    # 准备图片信息（如果有的话）
+                    # 如果有图片，添加图片
                     if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-                        # 将图片信息存储到待显示列表中
-                        self.pending_images[user_id] = {
-                            'text': response_text,
-                            'image_path': recommendation['image_path']
-                        }
-                        # 返回带图片提示的文本
-                        logger.info(f"换一个推荐成功（含图片）: {response_text[:50]}...")
-                        return f"{response_text}\n\n[图片已生成，正在显示...]"
+                        # 清理旧图片，只保留最新的几张
+                        self._cleanup_old_images()
+
+                        # 构建消息链
+                        message_chain = [
+                            Plain(text=response_text)
+                        ]
+
+                        # 添加图片
+                        message_chain.append(Image(file=recommendation['image_path']))
+
+                        # 返回推荐
+                        yield event.chain_result(message_chain)
+                        return
                     else:
-                        logger.info(f"换一个推荐成功: {response_text[:50]}...")
-                        return response_text
-                else:
-                    logger.info("上次推荐已过期（超过24小时）")
-            else:
-                logger.info("没有找到上次推荐记录")
+                        # 如果没有图片，只返回文本
+                        yield event.chain_result([Plain(text=response_text)])
+                        return
 
             # 如果没有之前的推荐记录或已过期，提示用户
-            return "抱歉，我不记得之前给你推荐了什么。请先告诉我你想吃什么类型的食物？"
+            yield event.chain_result([Plain(text="抱歉，我不记得之前给你推荐了什么。请先告诉我你想吃什么类型的食物？")])
+            return
 
         elif command_type == "food_image":
             # 处理美食图片生成命令
@@ -447,16 +435,12 @@ class FoodRecommenderPlugin(Star):
             )
 
             if image_path:
-                # 将图片信息存储到待显示列表中
-                user_id = self._get_user_id(event)
-                result_text = f"已为您生成{food_name}的美食图片"
-                self.pending_images[user_id] = {
-                    'text': result_text,
-                    'image_path': image_path
-                }
-                return f"{result_text}\n\n[图片已生成，正在显示...]"
+                yield event.chain_result([
+                    Plain(text=f"已为您生成{food_name}的美食图片：\n"),
+                    Image(file=image_path)
+                ])
             else:
-                return "AI生成图片失败，请稍后再试。"
+                yield event.chain_result([Plain(text="AI生成图片失败，请稍后再试。")])
 
         elif command_type == "image_generation":
             # 处理通用图片生成命令
@@ -477,16 +461,12 @@ class FoodRecommenderPlugin(Star):
             )
 
             if image_path:
-                # 将图片信息存储到待显示列表中
-                user_id = self._get_user_id(event)
-                result_text = f"已根据您的提示词生成图片"
-                self.pending_images[user_id] = {
-                    'text': result_text,
-                    'image_path': image_path
-                }
-                return f"{result_text}\n\n[图片已生成，正在显示...]"
+                yield event.chain_result([
+                    Plain(text=f"已根据您的提示词生成图片：\n"),
+                    Image(file=image_path)
+                ])
             else:
-                return "AI生成图片失败，请稍后再试。"
+                yield event.chain_result([Plain(text="AI生成图片失败，请稍后再试。")])
 
         else:
             # 如果无法识别命令类型，返回提示
@@ -529,55 +509,14 @@ class FoodRecommenderPlugin(Star):
         )
 
         if image_path:
-            # 将图片信息存储到待显示列表中
-            user_id = self._get_user_id(event)
-            result_text = f"已生成图片：{prompt}"
-            self.pending_images[user_id] = {
-                'text': result_text,
-                'image_path': image_path
-            }
-            return f"{result_text}\n\n[图片已生成，正在显示...]"
+            yield event.chain_result([
+                Plain(text=f"已生成图片：\n"),
+                Image(file=image_path)
+            ])
         else:
-            return "AI生成图片失败，请稍后再试。"
+            yield event.chain_result([Plain(text=f"AI生成图片失败，请稍后再试。")])
 
-    # 添加消息处理器来处理图片显示
-    async def handle(self, event):
-        """处理消息事件，主要用于显示图片"""
-        # 检查是否有待显示的图片
-        user_id = self._get_user_id(event)
-        if hasattr(self, 'pending_images') and user_id in self.pending_images:
-            image_info = self.pending_images[user_id]
-
-            # 构建包含图片的消息链
-            message_chain = [
-                Plain(text=image_info['text'])
-            ]
-
-            if image_info['image_path'] and os.path.exists(image_info['image_path']):
-                message_chain.append(Image(file=image_info['image_path']))
-
-                # 清理旧图片
-                self._cleanup_old_images()
-
-                # 如果是临时图片，延迟删除
-                if image_info['image_path'] in self.temp_images:
-                    async def delayed_delete(path, delay=10):
-                        await asyncio.sleep(delay)
-                        try:
-                            if os.path.exists(path):
-                                os.unlink(path)
-                                logger.info(f"已删除临时图片: {path}")
-                                self.temp_images.discard(path)
-                        except Exception as e:
-                            logger.error(f"删除临时图片失败 {path}: {e}")
-
-                    asyncio.create_task(delayed_delete(image_info['image_path']))
-
-            # 清除待显示的图片信息
-            del self.pending_images[user_id]
-
-            # 发送消息
-            return message_chain
+    # 消息处理器不再需要，因为我们使用LLM工具来处理命令
 
     async def terminate(self):
         # 退出时清理临时文件
