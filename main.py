@@ -418,60 +418,32 @@ class FoodRecommenderPlugin(Star):
             # 提取食物名称
             food_name = self._extract_food_name(text)
             if not food_name:
-                return "请指定要生成图片的食物名称，例如：生成美食图 红烧肉"
+                yield event.chain_result([Plain(text="请指定要生成图片的食物名称，例如：生成美食图 红烧肉")])
+                return
 
             # 构建美食提示词
             prompt = f"高质量、写实风格的美食照片，特写镜头，\"{food_name}\"，美食摄影，精美摆盘，专业灯光，鲜艳色彩，美味可口的外观，食物特写"
 
-            # 生成图片
-            from .image_generator import generate_food_image
-            image_path = await generate_food_image(
-                food_name=None,
-                prompt=prompt,
-                context=self,
-                output_dir=self.OUTPUT_DIR,
-                width=1024,
-                height=1024
-            )
-
-            if image_path:
-                yield event.chain_result([
-                    Plain(text=f"已为您生成{food_name}的美食图片：\n"),
-                    Image(file=image_path)
-                ])
-            else:
-                yield event.chain_result([Plain(text="AI生成图片失败，请稍后再试。")])
+            # 使用generate_image方法生成图片
+            async for result in self.generate_image(event, prompt):
+                yield result
 
         elif command_type == "image_generation":
             # 处理通用图片生成命令
             # 提取提示词
             prompt = self._extract_prompt(text)
             if not prompt:
-                return "请指定要生成图片的提示词，例如：生成图片 小猫在沙发上睡觉"
+                yield event.chain_result([Plain(text="请指定要生成图片的提示词，例如：生成图片 小猫在沙发上睡觉")])
+                return
 
-            # 生成图片
-            from .image_generator import generate_food_image
-            image_path = await generate_food_image(
-                food_name=None,
-                prompt=prompt,
-                context=self,
-                output_dir=self.OUTPUT_DIR,
-                width=1024,
-                height=1024
-            )
-
-            if image_path:
-                yield event.chain_result([
-                    Plain(text=f"已根据您的提示词生成图片：\n"),
-                    Image(file=image_path)
-                ])
-            else:
-                yield event.chain_result([Plain(text="AI生成图片失败，请稍后再试。")])
+            # 使用generate_image方法生成图片
+            async for result in self.generate_image(event, prompt):
+                yield result
 
         else:
             # 如果无法识别命令类型，返回提示
-            logger.warning(f"无法识别的命令类型: {command_type}, 原始文本: {text}")
-            return "抱歉，我无法理解您的命令。请尝试使用“吃什么”、“生成美食图”等命令。"
+            yield event.chain_result([Plain(text="抱歉，我无法理解您的命令。请尝试使用“吃什么”、“生成美食图”等命令。")])
+            return
 
     # 已在food_command_handler中实现换一个推荐的功能，此方法不再使用
 
@@ -495,7 +467,8 @@ class FoodRecommenderPlugin(Star):
         # 检查API密钥
         if not access_key or not secret_key:
             logger.warning("缺少API密钥配置，请在_conf_schema.json中添加volcengine_ak和volcengine_sk")
-            return "API密钥配置缺失，无法生成图片。"
+            yield event.chain_result([Plain(text=f"API密钥配置缺失，无法生成图片。")])
+            return
 
         # 使用image_generator模块生成图片
         from .image_generator import generate_food_image
