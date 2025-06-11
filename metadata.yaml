@@ -1,6 +1,6 @@
 name: astrbot-food-recommender
 desc: 食物推荐插件，可以根据时间、天气和季节智能推荐食物，并使用 AI 生成食物图片和描述
 help: ''
-version: v1.1.0
+version: v1.0.1
 author: wayzinx
 repo: https://github.com/Wayzinx/astrbot-food-recommender

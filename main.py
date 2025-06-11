@@ -20,7 +20,7 @@ OUTPUT_DIR = os.path.join(current_directory, "output")
 # 确保输出目录存在
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-@register("food_recommender", "wayzinx", "美食推荐工具 - 根据时间、天气等因素随机推荐美食", "1.0.0")
+@register("food_recommender", "wayzinx", "美食推荐工具 - 根据时间、天气等因素随机推荐美食", "1.0.1")
 class FoodRecommenderPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -34,6 +34,8 @@ class FoodRecommenderPlugin(Star):
         self.last_recommendations = {}
         # 记录最近的推荐历史，用于去重
         self.recent_foods = {}
+        # 待显示的图片信息
+        self.pending_images = {}
         # 添加OUTPUT_DIR到context，以便其他模块使用
         self.OUTPUT_DIR = OUTPUT_DIR
 
@@ -190,27 +192,20 @@ class FoodRecommenderPlugin(Star):
         if len(self.recent_foods[user_id]) > 5:
             self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
 
-        # 清理旧图片，只保留最新的几张
+        # 准备图片信息（如果有的话）
         if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-            self._cleanup_old_images()
-
-            # 如果是临时图片，延迟删除
-            if recommendation['image_path'] in self.temp_images:
-                async def delayed_delete(path, delay=10):
-                    await asyncio.sleep(delay)
-                    try:
-                        if os.path.exists(path):
-                            os.unlink(path)
-                            logger.info(f"已删除临时图片: {path}")
-                            self.temp_images.discard(path)
-                    except Exception as e:
-                        logger.error(f"删除临时图片失败 {path}: {e}")
-
-                asyncio.create_task(delayed_delete(recommendation['image_path']))
-
-        # 返回文本结果
-        result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
-        return result_text
+            # 将图片信息存储到待显示列表中
+            result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
+            self.pending_images[user_id] = {
+                'text': result_text,
+                'image_path': recommendation['image_path']
+            }
+            # 返回带图片提示的文本
+            return f"{result_text}\n\n[图片已生成，正在显示...]"
+        else:
+            # 没有图片，直接返回文本
+            result_text = f"我为你推荐：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
+            return result_text
 
     # 食物类型关键词映射
     MEAL_TYPE_KEYWORDS = {
@@ -409,12 +404,19 @@ class FoodRecommenderPlugin(Star):
                     city_text = f"（{current_city}）" if current_city else ""
                     response_text = f"换一个推荐{city_text}：{recommendation['food']}\n\n{recommendation['reason']}\n\n{recommendation['description']}"
 
-                    # 清理旧图片，只保留最新的几张
+                    # 准备图片信息（如果有的话）
                     if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
-                        self._cleanup_old_images()
-
-                    logger.info(f"换一个推荐成功: {response_text[:50]}...")
-                    return response_text
+                        # 将图片信息存储到待显示列表中
+                        self.pending_images[user_id] = {
+                            'text': response_text,
+                            'image_path': recommendation['image_path']
+                        }
+                        # 返回带图片提示的文本
+                        logger.info(f"换一个推荐成功（含图片）: {response_text[:50]}...")
+                        return f"{response_text}\n\n[图片已生成，正在显示...]"
+                    else:
+                        logger.info(f"换一个推荐成功: {response_text[:50]}...")
+                        return response_text
                 else:
                     logger.info("上次推荐已过期（超过24小时）")
             else:
@@ -445,7 +447,14 @@ class FoodRecommenderPlugin(Star):
             )
 
             if image_path:
-                return f"已为您生成{food_name}的美食图片"
+                # 将图片信息存储到待显示列表中
+                user_id = self._get_user_id(event)
+                result_text = f"已为您生成{food_name}的美食图片"
+                self.pending_images[user_id] = {
+                    'text': result_text,
+                    'image_path': image_path
+                }
+                return f"{result_text}\n\n[图片已生成，正在显示...]"
             else:
                 return "AI生成图片失败，请稍后再试。"
 
@@ -468,7 +477,14 @@ class FoodRecommenderPlugin(Star):
             )
 
             if image_path:
-                return f"已根据您的提示词生成图片"
+                # 将图片信息存储到待显示列表中
+                user_id = self._get_user_id(event)
+                result_text = f"已根据您的提示词生成图片"
+                self.pending_images[user_id] = {
+                    'text': result_text,
+                    'image_path': image_path
+                }
+                return f"{result_text}\n\n[图片已生成，正在显示...]"
             else:
                 return "AI生成图片失败，请稍后再试。"
 
@@ -513,11 +529,55 @@ class FoodRecommenderPlugin(Star):
         )
 
         if image_path:
-            return f"已生成图片：{prompt}"
+            # 将图片信息存储到待显示列表中
+            user_id = self._get_user_id(event)
+            result_text = f"已生成图片：{prompt}"
+            self.pending_images[user_id] = {
+                'text': result_text,
+                'image_path': image_path
+            }
+            return f"{result_text}\n\n[图片已生成，正在显示...]"
         else:
             return "AI生成图片失败，请稍后再试。"
 
-    # 消息处理器不再需要，因为我们使用LLM工具来处理命令
+    # 添加消息处理器来处理图片显示
+    async def handle(self, event):
+        """处理消息事件，主要用于显示图片"""
+        # 检查是否有待显示的图片
+        user_id = self._get_user_id(event)
+        if hasattr(self, 'pending_images') and user_id in self.pending_images:
+            image_info = self.pending_images[user_id]
+
+            # 构建包含图片的消息链
+            message_chain = [
+                Plain(text=image_info['text'])
+            ]
+
+            if image_info['image_path'] and os.path.exists(image_info['image_path']):
+                message_chain.append(Image(file=image_info['image_path']))
+
+                # 清理旧图片
+                self._cleanup_old_images()
+
+                # 如果是临时图片，延迟删除
+                if image_info['image_path'] in self.temp_images:
+                    async def delayed_delete(path, delay=10):
+                        await asyncio.sleep(delay)
+                        try:
+                            if os.path.exists(path):
+                                os.unlink(path)
+                                logger.info(f"已删除临时图片: {path}")
+                                self.temp_images.discard(path)
+                        except Exception as e:
+                            logger.error(f"删除临时图片失败 {path}: {e}")
+
+                    asyncio.create_task(delayed_delete(image_info['image_path']))
+
+            # 清除待显示的图片信息
+            del self.pending_images[user_id]
+
+            # 发送消息
+            return message_chain
 
     async def terminate(self):
         # 退出时清理临时文件
