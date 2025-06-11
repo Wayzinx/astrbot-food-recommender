@@ -419,15 +419,72 @@ class FoodRecommenderPlugin(Star):
                 else:
                     current_city = last_rec.get('city', None)
 
+                # 保存城市信息到context中，供generate_food_recommendation使用
+                if current_city:
+                    self.user_specified_city = current_city
+
+                # 初始化历史推荐列表（用于去重）
+                if not hasattr(self, 'recent_foods'):
+                    self.recent_foods = {}
+                if user_id not in self.recent_foods:
+                    self.recent_foods[user_id] = []
+
                 # 发送等待消息
                 city_text = f"（{current_city}）" if current_city else ""
                 yield event.chain_result([Plain(text=f"正在为你换一个推荐{city_text}，请稍候...")])
 
-                # 直接调用recommend_food方法，它会处理去重逻辑
-                async for result in self.recommend_food(event, meal_type, current_city):
-                    # 跳过等待消息，只返回推荐结果
-                    if not (len(result) == 1 and "正在为你推荐" in str(result[0])):
-                        yield result
+                # 生成推荐，避免与最近推荐的相同
+                from .recommendation import generate_food_recommendation
+                for attempt in range(10):  # 尝试最多10次以获取不同的推荐
+                    recommendation = await generate_food_recommendation(meal_type, self)
+                    if recommendation['food'] not in self.recent_foods[user_id]:
+                        break
+                    logger.info(f"第{attempt+1}次尝试，推荐的{recommendation['food']}与历史重复，重新生成")
+
+                # 记录本次推荐
+                self.last_recommendations[user_id] = {
+                    'meal_type': meal_type,
+                    'food': recommendation['food'],
+                    'timestamp': datetime.datetime.now(),
+                    'city': current_city
+                }
+
+                # 更新历史推荐列表
+                self.recent_foods[user_id].append(recommendation['food'])
+                if len(self.recent_foods[user_id]) > 5:
+                    self.recent_foods[user_id] = self.recent_foods[user_id][-5:]
+
+                # 构建消息链
+                city_text = f"（{current_city}）" if current_city else ""
+                message_chain = [
+                    Plain(text=f"换一个推荐{city_text}：{recommendation['food']}\n\n"),
+                    Plain(text=f"{recommendation['reason']}\n\n"),
+                    Plain(text=f"{recommendation['description']}")
+                ]
+
+                # 如果有图片，添加图片
+                if recommendation['image_path'] and os.path.exists(recommendation['image_path']):
+                    message_chain.append(Image(file=recommendation['image_path']))
+
+                    # 清理旧图片，只保留最新的几张
+                    self._cleanup_old_images()
+
+                    # 如果是临时图片，延迟删除
+                    if recommendation['image_path'] in self.temp_images:
+                        async def delayed_delete(path, delay=10):
+                            await asyncio.sleep(delay)
+                            try:
+                                if os.path.exists(path):
+                                    os.unlink(path)
+                                    logger.info(f"已删除临时图片: {path}")
+                                    self.temp_images.discard(path)
+                            except Exception as e:
+                                logger.error(f"删除临时图片失败 {path}: {e}")
+
+                        asyncio.create_task(delayed_delete(recommendation['image_path']))
+
+                # 返回推荐
+                yield event.chain_result(message_chain)
                 return
 
         # 如果没有之前的推荐记录或已过期，提示用户
