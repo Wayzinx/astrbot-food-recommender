@@ -114,8 +114,7 @@ async def generate_food_recommendation(meal_type=None, context=None):
         logger.info(f"用户指定了城市: {specified_city}")
         # 如果用户指定了城市，使用指定的城市获取天气
         weather_info = await get_weather(specified_city)
-        # 清除临时存储的城市信息
-        context.user_specified_city = None
+        # 注意：不清除城市信息，因为可能需要重试
     else:
         # 否则使用用户文本识别城市
         weather_info = await get_weather(user_text)

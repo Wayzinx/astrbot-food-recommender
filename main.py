@@ -20,7 +20,7 @@ OUTPUT_DIR = os.path.join(current_directory, "output")
 # 确保输出目录存在
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-@register("food_recommender", "wayzinx", "美食推荐工具 - 根据时间、天气等因素随机推荐美食", "1.0.1")
+@register("food_recommender", "wayzinx", "美食推荐工具 - 根据时间、天气等因素随机推荐美食", "1.0.2")
 class FoodRecommenderPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -186,6 +186,9 @@ class FoodRecommenderPlugin(Star):
 
         # 生成推荐，避免与最近推荐的相同
         for attempt in range(10):  # 尝试最多10次以获取不同的推荐
+            # 确保每次尝试都设置正确的城市信息
+            if city:
+                self.user_specified_city = city
             recommendation = await generate_food_recommendation(meal_type, self)
             if recommendation['food'] not in self.recent_foods[user_id]:
                 break
@@ -231,6 +234,10 @@ class FoodRecommenderPlugin(Star):
                         logger.error(f"删除临时图片失败 {path}: {e}")
 
                 asyncio.create_task(delayed_delete(recommendation['image_path']))
+
+        # 清除临时存储的城市信息
+        if hasattr(self, 'user_specified_city'):
+            self.user_specified_city = None
 
         # 返回推荐
         yield event.chain_result(message_chain)
@@ -436,6 +443,9 @@ class FoodRecommenderPlugin(Star):
                 # 生成推荐，避免与最近推荐的相同
                 from .recommendation import generate_food_recommendation
                 for attempt in range(10):  # 尝试最多10次以获取不同的推荐
+                    # 确保每次尝试都设置正确的城市信息
+                    if current_city:
+                        self.user_specified_city = current_city
                     recommendation = await generate_food_recommendation(meal_type, self)
                     if recommendation['food'] not in self.recent_foods[user_id]:
                         break
@@ -482,6 +492,10 @@ class FoodRecommenderPlugin(Star):
                                 logger.error(f"删除临时图片失败 {path}: {e}")
 
                         asyncio.create_task(delayed_delete(recommendation['image_path']))
+
+                # 清除临时存储的城市信息
+                if hasattr(self, 'user_specified_city'):
+                    self.user_specified_city = None
 
                 # 返回推荐
                 yield event.chain_result(message_chain)
